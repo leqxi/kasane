@@ -1,0 +1,66 @@
+{
+  "name": "kasane",
+  "version": "0.1.0",
+  "description": "Tells an overlay which surface it is layered over, and where the boundary crosses it.",
+  "keywords": [
+    "scroll",
+    "overlay",
+    "header",
+    "sticky",
+    "contrast",
+    "theme",
+    "surface",
+    "intersection",
+    "accessibility",
+    "dom"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/leqxi/kasane.git"
+  },
+  "bugs": {
+    "url": "https://github.com/leqxi/kasane/issues"
+  },
+  "author": "Kevin Pierik <https://www.kevinpierik.dev/>",
+  "license": "MIT",
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "rm -rf dist && tsc -p tsconfig.build.json",
+    "size": "npm run build --silent && node scripts/size.mjs",
+    "check": "npm run check.types && npm run check.biome",
+    "check.types": "tsc --noEmit",
+    "check.biome": "biome lint --diagnostic-level=error",
+    "format": "biome check --write --unsafe",
+    "test": "playwright test",
+    "prepack": "npm run build"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.0.0",
+    "@playwright/test": "^1.50.0",
+    "@types/node": "^22.20.2",
+    "typescript": "^5.7.0"
+  }
+}

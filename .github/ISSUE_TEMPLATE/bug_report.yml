@@ -1,0 +1,54 @@
+name: Bug report
+description: A reading that does not match what the browser painted, or anything else that misbehaves.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        kasane's own claim is that every reading matches the paint, so a reading that does not is
+        worth a report. A link to a reduced case is worth more than any description.
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What happens
+      description: What kasane wrote on the target, and what the browser actually painted behind it.
+      placeholder: |
+        The header reads data-kasane="ink" while the section behind it is the cream one.
+    validations:
+      required: true
+
+  - type: input
+    id: reduced
+    attributes:
+      label: A reduced case
+      description: A CodePen, StackBlitz or small repository — the smaller the better.
+      placeholder: https://stackblitz.com/edit/...
+
+  - type: textarea
+    id: setup
+    attributes:
+      label: The call
+      description: How kasane is called, and the shape of the surfaces and the target around it.
+      render: js
+      placeholder: |
+        kasane(".site-header", { root: scroller, axis: "block" });
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: kasane version
+      placeholder: 0.1.0
+    validations:
+      required: true
+
+  - type: input
+    id: browser
+    attributes:
+      label: Browser
+      description: Which engines you have seen it in, and which you have not.
+      placeholder: Safari 18.2, not in Chrome 131
+    validations:
+      required: true

@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: README
+    url: https://github.com/leqxi/kasane#readme
+    about: The API, what kasane writes, and how it avoids the work.

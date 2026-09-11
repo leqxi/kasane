@@ -1,0 +1,32 @@
+name: Feature request
+description: Something kasane should report, or an option it should take.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        kasane only reports: it writes the tokens, the split and the axis, and chooses no colours,
+        adds no styles and animates nothing. Proposals that keep it that way have the best chance,
+        since everything it writes has to be paid for in bytes and in a layout read somewhere.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What you cannot express today
+      description: The situation an overlay is in, and what you have to do instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What kasane would write, or take
+      description: The attribute, the custom property or the option, and what it would mean.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What you have already tried
+      description: Including whether `measure()`, `root`, `attribute` or a second call covers it.

@@ -1,5 +1,5 @@
 {
-  "name": "kasane",
+  "name": "@leqxi/kasane",
   "version": "0.1.0",
   "description": "Tells an overlay which surface it is layered over, and where the boundary crosses it.",
   "keywords": [

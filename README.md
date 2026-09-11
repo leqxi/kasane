@@ -17,13 +17,13 @@ reports the edge, so a clip can sit exactly on it instead of a fade guessing acr
 **One ES module, about 1.8 kB minified and gzipped, no dependencies.**
 
 ```sh
-npm install kasane
+npm install @leqxi/kasane
 ```
 
 ## Use
 
 ```js
-import { kasane } from "kasane";
+import { kasane } from "@leqxi/kasane";
 
 kasane(".site-header");
 ```

@@ -6,6 +6,15 @@ All notable changes to kasane are recorded here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- `axis` is now the logical axis its name says it is. `"inline"` measured `left`/`right` and
+  `"block"` measured `top`/`bottom` whatever the page's writing direction was, so on an Arabic page
+  `data-kasane-start` named the surface at the *end* of the inline axis and `--kasane-split` was the
+  fraction from the wrong side; a vertical writing mode had both axes on the wrong one entirely.
+  kasane now resolves `writing-mode` and `direction` in the read phase and measures along the axis
+  CSS means. Nothing changes for a left-to-right, horizontal page.
+
 ## [0.1.0]
 
 First release.

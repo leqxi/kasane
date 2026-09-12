@@ -14,7 +14,7 @@ guaranteed against neither background.
 kasane reads no element at all while a page scrolls, answers for each overlay separately, and
 reports the edge, so a clip can sit exactly on it instead of a fade guessing across it.
 
-**One ES module, about 1.8 kB minified and gzipped, no dependencies.**
+**One ES module, about 2.0 kB minified and gzipped, no dependencies.**
 
 ```sh
 npm install @leqxi/kasane
@@ -91,6 +91,32 @@ section shorter than the overlay, a card floating in the middle of one, or a pan
 its width all leave the split attributes off: kasane reports the dominant surface and nothing else,
 and the `, 1` fallback above keeps the first layer whole.
 
+### Which side the split starts from
+
+The two sides are the axis's own, not the screen's. On the block axis `data-kasane-start` is the
+surface above the edge. On the inline axis it is the one the writing direction starts from — the
+right-hand surface on an Arabic page, the top one in vertical Japanese — and `--kasane-split` is
+the fraction measured from that same side.
+
+`clip-path: inset()` has no logical form, which is what `data-kasane-axis` is for. The inline pair,
+and the same two clips with their ends swapped for a page that runs the other way:
+
+```css
+[data-kasane-axis="inline"] .face {
+  clip-path: inset(0 calc(100% - var(--kasane-split, 1) * 100%) 0 0);
+}
+[data-kasane-axis="inline"] .face-end {
+  clip-path: inset(0 0 0 calc(var(--kasane-split, 1) * 100%));
+}
+
+[dir="rtl"] [data-kasane-axis="inline"] .face {
+  clip-path: inset(0 0 0 calc(100% - var(--kasane-split, 1) * 100%));
+}
+[dir="rtl"] [data-kasane-axis="inline"] .face-end {
+  clip-path: inset(0 calc(var(--kasane-split, 1) * 100%) 0 0);
+}
+```
+
 ## What it writes
 
 On each target, and only while there is something to say:
@@ -119,7 +145,7 @@ kasane(target, options?): Kasane
 | --- | --- | --- |
 | `surfaces` | `"[data-surface]"` | Selector for the elements that declare a surface. |
 | `attribute` | `"data-surface"` | Attribute the token is read from. Point it at what your sections already carry. |
-| `axis` | `"block"` | The axis an edge is measured along. `"inline"` for a sideways scroller. |
+| `axis` | `"block"` | The axis an edge is measured along, in CSS's own terms: `"block"` runs down the page, `"inline"` along the writing direction. `"inline"` for a sideways scroller. |
 | `split` | `true` | Report where an edge crosses a target. |
 | `root` | `null` | The scroller the surfaces live in. Defaults to the document's. |
 
@@ -133,6 +159,10 @@ The returned controller:
 
 Calling `kasane()` on a target another controller already owns reverts that one first, so two
 controllers never fight over the same attributes.
+
+A target that is not being painted — hidden, or taken out of the page — reports nothing, and says
+so again when it comes back. That is the same state it is in before the first write, so a
+stylesheet that reads correctly without kasane reads correctly here too.
 
 ### A scroller of its own
 
@@ -169,11 +199,21 @@ in CSS than in script, and a `data-kasane` attribute map works everywhere.
 
 ```sh
 npm install
-npm run build   # dist/, which is what the tests load and what npm ships
-npm test        # against the browser, in Chromium, WebKit and Firefox
-npm run check   # types and lint
-npm run size    # what the built module actually weighs
+npm run build       # dist/, which is what the tests load and what npm ships
+npm test            # against the browser, in Chromium, WebKit and Firefox
+npm run check       # types and lint
+npm run size        # what the built module actually weighs
+npm run check.size  # the same, against the budget the size above is stated from
+npm run fix         # apply the lint fixes that are safe to apply
 ```
+
+The source is laid out by hand, so Biome lints it but does not format it: a signature broken across
+lines that would fit on one, or a comment wrapped to read as a paragraph, is a choice rather than an
+oversight. `.editorconfig` carries the indentation.
+
+The size in this README is a budget in `scripts/size.mjs`, and CI fails when the build outgrows it.
+Raising it is the right move for a change worth the bytes — in the same commit as the sentence above
+that it makes untrue.
 
 Every reading is checked against an oracle that is not kasane: `document.elementsFromPoint()`, the
 hit test kasane exists to avoid. It is authoritative, because it asks the browser what it actually
@@ -183,12 +223,6 @@ arithmetic against.
 Each test builds the page it needs and loads `dist/index.js` into it, so there is no fixture site to
 keep in step with the suite, and what is exercised is the file a consumer actually installs.
 
-## Credits
-
-The shape of this project follows [kugiri](https://github.com/edoardolunardi/kugiri) by Edoardo
-Lunardi: a small dependency-free module whose claims are checked against an oracle that is not the
-library. No code of his remains here; the idea is his.
-
 ## License
 
-MIT © [Kevin Pierik](https://www.kevinpierik.dev/)
+MIT

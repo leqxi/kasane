@@ -62,6 +62,9 @@ export type Kasane = {
 /** A box on the measured axis and across it, in whichever space its owner is stored in. */
 type Box = { start: number; end: number; crossStart: number; crossEnd: number };
 
+/** Which physical axis a logical one runs on, and whether it runs backwards along it. */
+type Flow = { horizontal: boolean; flip: boolean };
+
 /**
  * A surface, in document space, which scrolling does not change. `order` is its position in
  * document order, which is the order it paints in: a card inside a section comes after the section
@@ -105,30 +108,58 @@ const collect = (input: string | Element | Iterable<Element>): HTMLElement[] => 
 };
 
 /**
+ * Where a logical axis physically runs. `block` and `inline` are CSS's own axes: a page in Arabic
+ * runs its inline axis right to left, and a page in vertical Japanese runs its block axis across
+ * the page rather than down it. kasane reports the surface at the *start* of the axis and a
+ * fraction measured from there, so the start has to be the one the writing direction means rather
+ * than the left or top edge of a rect. One style read, in the read phase, where one is already paid
+ * for.
+ */
+const flowOf = (element: Element, axis: KasaneAxis): Flow => {
+  const style = getComputedStyle(element);
+  const mode = style.writingMode;
+  // Named rather than compared against `horizontal-tb`, so anything unexpected — a legacy value, a
+  // keyword from after this was written — falls back to the way almost every page is laid out
+  // instead of to the rarest one.
+  const vertical = mode.startsWith("vertical") || mode.startsWith("sideways");
+
+  // The block axis runs down the page, or across it in a vertical mode — leftwards in the `-rl`
+  // ones. The inline axis runs the other way, reversed by `direction: rtl`; `sideways-lr` is the
+  // one mode whose text climbs the page instead of descending it, which reverses it again.
+  return axis === "block"
+    ? { horizontal: vertical, flip: mode.endsWith("-rl") }
+    : { horizontal: !vertical, flip: (style.direction === "rtl") !== (mode === "sideways-lr") };
+};
+
+/**
  * A rect along the measured axis and across it. Reading both off one `DOMRect` is what lets the
  * same arithmetic serve a horizontal boundary, so a half width section or a horizontal scroller
  * needs no second code path.
+ *
+ * An axis that runs backwards is measured in negated coordinates rather than given a code path of
+ * its own: everything downstream only needs start to come before end, and negating both edges of
+ * every box — and the scroll along with them — is exactly that. `scroll` arrives already negated
+ * for such an axis, so what is stored stays a document-space number scrolling does not change.
  */
 const boxOf = (
   rect: DOMRect,
-  axis: KasaneAxis,
+  flow: Flow,
   origin: { x: number; y: number },
   scroll: number,
   crossScroll: number,
-): Box =>
-  axis === "block"
-    ? {
-        start: rect.top - origin.y + scroll,
-        end: rect.bottom - origin.y + scroll,
-        crossStart: rect.left - origin.x + crossScroll,
-        crossEnd: rect.right - origin.x + crossScroll,
-      }
-    : {
-        start: rect.left - origin.x + scroll,
-        end: rect.right - origin.x + scroll,
-        crossStart: rect.top - origin.y + crossScroll,
-        crossEnd: rect.bottom - origin.y + crossScroll,
-      };
+): Box => {
+  const near = flow.horizontal ? rect.left - origin.x : rect.top - origin.y;
+  const far = flow.horizontal ? rect.right - origin.x : rect.bottom - origin.y;
+  const crossNear = flow.horizontal ? rect.top - origin.y : rect.left - origin.x;
+  const crossFar = flow.horizontal ? rect.bottom - origin.y : rect.right - origin.x;
+
+  return {
+    start: (flow.flip ? -far : near) + scroll,
+    end: (flow.flip ? -near : far) + scroll,
+    crossStart: crossNear + crossScroll,
+    crossEnd: crossFar + crossScroll,
+  };
+};
 
 const span = (a: number, b: number, c: number, d: number) => Math.max(0, Math.min(b, d) - Math.max(a, c));
 
@@ -156,10 +187,18 @@ export function kasane(
     return { x: rect.left, y: rect.top };
   };
 
+  /**
+   * The element whose writing direction the axis follows: the scroller, or the page's body when
+   * that is the document. Body rather than the root element because `dir` is written on either and
+   * inherits down, so the lower of the two is the one that has the answer both ways round.
+   */
+  const flowsFrom = () => root ?? document.body ?? document.documentElement;
+
   const scrollOf = () => {
     const down = root ? root.scrollTop : window.scrollY;
     const across = root ? root.scrollLeft : window.scrollX;
-    return axis === "block" ? { main: down, cross: across } : { main: across, cross: down };
+    const main = flow.horizontal ? across : down;
+    return { main: flow.flip ? -main : main, cross: flow.horizontal ? down : across };
   };
 
   const elements = collect(target);
@@ -178,6 +217,7 @@ export function kasane(
 
   let surfaces: Surface[] = [];
   let observed: Element[] = [];
+  let flow = flowOf(flowsFrom(), axis);
   let frame = 0;
   let pending = WRITE;
   let live = true;
@@ -206,7 +246,7 @@ export function kasane(
   const readTargets = (from?: { x: number; y: number }) => {
     const origin = from ?? originOf();
     for (const entry of targets) {
-      entry.box = boxOf(entry.element.getBoundingClientRect(), axis, origin, 0, 0);
+      entry.box = boxOf(entry.element.getBoundingClientRect(), flow, origin, 0, 0);
     }
   };
 
@@ -216,6 +256,10 @@ export function kasane(
    * between the two spaces changed, and that is a number the browser already has.
    */
   const read = () => {
+    // The writing direction is layout too: a `dir` toggled on the page moves the axis's start to
+    // the other end of it, and every box measured after that has to agree on which end that is.
+    flow = flowOf(flowsFrom(), axis);
+
     const { main: scroll, cross: crossScroll } = scrollOf();
     const origin = originOf();
     const found = Array.from((root ?? document).querySelectorAll(selector));
@@ -227,7 +271,7 @@ export function kasane(
       surfaces.push({
         token,
         order: surfaces.length,
-        box: boxOf(element.getBoundingClientRect(), axis, origin, scroll, crossScroll),
+        box: boxOf(element.getBoundingClientRect(), flow, origin, scroll, crossScroll),
       });
     }
 

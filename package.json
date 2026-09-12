@@ -21,6 +21,7 @@
   "bugs": {
     "url": "https://github.com/leqxi/kasane/issues"
   },
+  "homepage": "https://github.com/leqxi/kasane#readme",
   "author": "Kevin Pierik <https://www.kevinpierik.dev/>",
   "license": "MIT",
   "type": "module",
@@ -53,12 +54,13 @@
     "check": "npm run check.types && npm run check.biome",
     "check.types": "tsc --noEmit",
     "check.biome": "biome lint --diagnostic-level=error",
-    "format": "biome check --write --unsafe",
+    "check.size": "npm run build --silent && node scripts/size.mjs --budget",
+    "fix": "biome lint --write",
     "test": "playwright test",
     "prepack": "npm run build"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.0.0",
+    "@biomejs/biome": "2.5.13",
     "@playwright/test": "^1.50.0",
     "@types/node": "^22.20.2",
     "typescript": "^5.7.0"

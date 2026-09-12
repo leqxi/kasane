@@ -63,6 +63,7 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
       - run: npm ci
-      # The README states a number. This prints what the build actually weighs, so a change that
-      # moves it shows up in the log of the pull request that caused it.
-      - run: npm run size
+      # The README states a number, which is a claim made to anyone deciding whether to install
+      # this. The budget is that number: a change that outgrows it fails here rather than shipping
+      # a README that is quietly wrong.
+      - run: npm run check.size

@@ -72,9 +72,9 @@ jobs:
       - run: npx playwright install --with-deps
       - run: npm test
 
-      - name: Publish to npm
-        run: npm publish --provenance --access public
-
+      # Before the publish: a release page can be edited or deleted afterwards, a published version
+      # cannot. If the publish then fails, the tag still reads as a release and a rerun picks up
+      # where it left off.
       - name: List it as a GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -84,3 +84,6 @@ jobs:
           else
             gh release create "$TAG" --title "$TAG" --notes-file notes.md
           fi
+
+      - name: Publish to npm
+        run: npm publish --provenance --access public

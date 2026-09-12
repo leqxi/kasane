@@ -4,6 +4,9 @@
     "noEmit": false,
     "allowImportingTsExtensions": false,
     "declaration": true,
+    // Explicit, because it decides the shape of dist: inferred, the output is `dist/index.js` only
+    // for as long as `src` holds exactly one file, and TypeScript 7 refuses to infer it at all.
+    "rootDir": "src",
     "outDir": "dist",
     "removeComments": false
   },

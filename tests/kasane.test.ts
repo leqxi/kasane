@@ -17,6 +17,10 @@ declare global {
   interface Window {
     __kasane: (target: string | Element | Iterable<Element>, options?: KasaneOptions) => Kasane;
     __controller: Kasane;
+    /** Settles the stand-in for `document.fonts.ready`, so a test owns the moment fonts land. */
+    __fonts: () => void;
+    /** A target taken out of the page, still reachable to be read back. */
+    __parked: HTMLElement;
   }
 }
 
@@ -30,7 +34,9 @@ const STYLE = `
   * { box-sizing: border-box }
   body { margin: 0; font: 16px/1.4 system-ui, sans-serif }
   #stage { position: relative; width: 600px; height: 300px; overflow: hidden; background: #808080 }
-  #scroll { position: absolute; inset: 0; overflow: auto }
+  /* Scroll anchoring would absorb content growing above the fold by moving the scroll offset to
+     match, which is the browser hiding the very layout change some of these tests are about. */
+  #scroll { position: absolute; inset: 0; overflow: auto; overflow-anchor: none }
   #scroll.row { display: flex }
   .band { min-height: 150px }
   #scroll.row .band { flex: 0 0 240px; min-height: 100% }
@@ -47,6 +53,31 @@ const BANDS = `
   <div class="band paper" data-surface="paper"></div>`;
 
 const BAR = `<div class="bar" data-target="bar"></div>`;
+
+/** The page itself as the scroller: sections in normal flow, and a bar fixed over them. */
+const PAGE_STYLE = `
+  * { box-sizing: border-box }
+  body { margin: 0; font: 16px/1.4 system-ui, sans-serif }
+  .zone { min-height: 400px }
+  .bar { position: fixed; top: 0; left: 0; right: 0; height: 56px; z-index: 2 }
+  .ink { background: #000 }
+  .paper { background: #fff }
+`;
+
+const ZONES = `
+  <div class="zone ink" data-surface="ink"></div>
+  <div class="zone paper" data-surface="paper"></div>
+  <div class="zone ink" data-surface="ink"></div>`;
+
+/** Where the page has to be for a section edge to fall inside a bar fixed at the top. */
+const PAGE_CROSSING = 380;
+
+/**
+ * The same bands behind something kasane does not watch. Growing the spacer moves every section
+ * below it without changing the box of any observed element, which is the one layout change
+ * nothing reports.
+ */
+const SHIFTED = `<div id="spacer"></div>${BANDS}`;
 
 /** Where the scroller has to be for an edge to fall near the middle of the bar. */
 const CROSSING = 122;
@@ -68,20 +99,29 @@ type Painted = {
 /** Builds the scene, loads the built library, and starts it on every `[data-target]`. */
 async function scene(
   page: Page,
-  options: { surfaces: string; targets: string; axis?: "block" | "inline" },
+  options: {
+    surfaces: string;
+    targets: string;
+    axis?: "block" | "inline";
+    /** The writing direction of the scroller. */
+    dir?: "ltr" | "rtl";
+    /** Runs in the page once the scene stands, before kasane is started on it. */
+    init?: () => void;
+  },
 ) {
   const row = options.axis === "inline" ? "row" : "";
 
   await page.setContent(
     `<!doctype html><html><head><style>${STYLE}</style></head><body>
        <div id="stage">
-         <div id="scroll" class="${row}">${options.surfaces}</div>
+         <div id="scroll" class="${row}" dir="${options.dir ?? "ltr"}">${options.surfaces}</div>
          ${options.targets}
        </div>
      </body></html>`,
   );
 
   await page.addScriptTag({ content: `${LIBRARY}\nwindow.__kasane = kasane;` });
+  if (options.init) await page.evaluate(options.init);
 
   await page.evaluate((axis) => {
     const scroll = document.querySelector("#scroll") as HTMLElement;
@@ -105,6 +145,35 @@ async function scrollTo(page: Page, to: number) {
   await settle(page);
 }
 
+/**
+ * The arrangement the README opens with: sections in the page itself, a bar fixed over them, and
+ * kasane started on a selector. The document's own scroller is the default and the most used path
+ * through the library, and it is the one every scene above deliberately avoids by passing a `root`.
+ */
+async function pageScene(page: Page, body: string, start: () => void) {
+  await page.setContent(
+    `<!doctype html><html><head><style>${PAGE_STYLE}</style></head><body>${body}</body></html>`,
+  );
+
+  await page.addScriptTag({ content: `${LIBRARY}\nwindow.__kasane = kasane;` });
+  await page.evaluate(start);
+  await settle(page);
+}
+
+async function scrollPage(page: Page, to: number) {
+  await page.evaluate((y) => window.scrollTo(0, y), to);
+  await settle(page);
+}
+
+/** Grows the spacer in a `SHIFTED` scene, moving every section below it. */
+async function shift(page: Page, to: number) {
+  await page.evaluate((height) => {
+    (document.querySelector("#spacer") as HTMLElement).style.height = `${height}px`;
+  }, to);
+  await settle(page);
+  await settle(page);
+}
+
 const read = (page: Page, name: string): Promise<Reading> =>
   page.evaluate((target) => {
     const element = document.querySelector(`[data-target="${target}"]`) as HTMLElement;
@@ -117,9 +186,13 @@ const read = (page: Page, name: string): Promise<Reading> =>
     };
   }, name);
 
-const painted = (page: Page, name: string, axis: "block" | "inline" = "block"): Promise<Painted> =>
+const painted = (
+  page: Page,
+  name: string,
+  options: { axis?: "block" | "inline"; surfaces?: string; attribute?: string } = {},
+): Promise<Painted> =>
   page.evaluate(
-    ([target, direction]) => {
+    ([target, direction, selector, attribute]) => {
       const element = document.querySelector(`[data-target="${target}"]`) as HTMLElement;
       const rect = element.getBoundingClientRect();
       const vertical = direction === "block";
@@ -127,7 +200,7 @@ const painted = (page: Page, name: string, axis: "block" | "inline" = "block"): 
 
       const at = (x: number, y: number) => {
         for (const found of document.elementsFromPoint(x, y)) {
-          if (found.matches("[data-surface]")) return found.getAttribute("data-surface");
+          if (found.matches(selector)) return found.getAttribute(attribute);
         }
         return null;
       };
@@ -179,7 +252,12 @@ const painted = (page: Page, name: string, axis: "block" | "inline" = "block"): 
         extent,
       };
     },
-    [name, axis] as const,
+    [
+      name,
+      options.axis ?? "block",
+      options.surfaces ?? "[data-surface]",
+      options.attribute ?? "data-surface",
+    ] as const,
   );
 
 /** The token covering most of the target, which is what `data-kasane` should say. */
@@ -265,6 +343,97 @@ test.describe("what is behind an overlay", () => {
   });
 });
 
+test.describe("the page as its own scroller", () => {
+  test("is what a call with no options measures against", async ({ page }) => {
+    // `kasane(".site-header")`, which is how the README opens and how most of the library's use
+    // will look: the document's scroller, `window.scrollY`, a fixed bar, and a selector for a
+    // target. Every other scene here hands kasane a `root` and never walks this path.
+    await pageScene(page, `${ZONES}<div class="bar" data-target="bar"></div>`, () => {
+      window.__controller = window.__kasane(".bar");
+    });
+    await scrollPage(page, PAGE_CROSSING);
+
+    const got = await read(page, "bar");
+    const want = await painted(page, "bar");
+
+    expect(want.split, "the scene should put an edge through the bar").not.toBeNull();
+    expect(got.token).toBe(dominant(want));
+    expect(got.start).toBe(want.start);
+    expect(got.end).toBe(want.end);
+    expect(await page.getAttribute('[data-target="bar"]', "data-kasane-axis")).toBe("block");
+
+    const off = Math.abs((got.split ?? 0) - (want.split ?? 0)) * want.extent;
+    expect(off, `edge off by ${off.toFixed(2)}px`).toBeLessThanOrEqual(TOLERANCE);
+  });
+
+  test("takes a selector, an element or a list, and says what it took", async ({ page }) => {
+    await pageScene(page, `${ZONES}<div class="bar" data-target="bar"></div>`, () => {
+      window.__controller = window.__kasane(".bar");
+    });
+
+    const took = await page.evaluate(() => {
+      const bar = document.querySelector('[data-target="bar"]') as HTMLElement;
+      const selector = window.__controller.targets;
+
+      // Each call takes the target off the one before it, which is the documented behaviour; what
+      // is being read here is only that all three ways of naming a target resolve to the same one.
+      const element = window.__kasane(bar).targets;
+      const list = window.__kasane([bar]).targets;
+
+      return {
+        counts: [selector.length, element.length, list.length],
+        same: [selector[0], element[0], list[0]].every((found) => found === bar),
+      };
+    });
+
+    expect(took).toEqual({ counts: [1, 1, 1], same: true });
+  });
+
+  test("reads the surfaces and the attribute it is pointed at", async ({ page }) => {
+    await pageScene(
+      page,
+      `<div class="zone ink" data-theme="night"></div>
+       <div class="zone paper" data-theme="day"></div>
+       <div class="zone ink" data-theme="night"></div>
+       <div class="bar" data-target="bar"></div>`,
+      () => {
+        window.__controller = window.__kasane(".bar", {
+          surfaces: "[data-theme]",
+          attribute: "data-theme",
+        });
+      },
+    );
+    await scrollPage(page, PAGE_CROSSING);
+
+    const surfaces = { surfaces: "[data-theme]", attribute: "data-theme" };
+    const got = await read(page, "bar");
+    const want = await painted(page, "bar", surfaces);
+
+    expect(want.split, "the scene should put an edge through the bar").not.toBeNull();
+    expect(got.token).toBe(dominant(want));
+    expect(got.start).toBe(want.start);
+    expect(got.end).toBe(want.end);
+    expect(got.start, "the token is the attribute's value, whatever the attribute is").toBe("night");
+  });
+
+  test("reports no edge at all when asked not to", async ({ page }) => {
+    await pageScene(page, `${ZONES}<div class="bar" data-target="bar"></div>`, () => {
+      window.__controller = window.__kasane(".bar", { split: false });
+    });
+    await scrollPage(page, PAGE_CROSSING);
+
+    const got = await read(page, "bar");
+    const want = await painted(page, "bar");
+
+    expect(want.split, "an edge does cross the bar here").not.toBeNull();
+    expect(got.token, "the surface is still reported").toBe(dominant(want));
+    expect(got.start, "the edge is not").toBeNull();
+    expect(got.end).toBeNull();
+    expect(got.split).toBeNull();
+    expect(await page.getAttribute('[data-target="bar"]', "data-kasane-axis")).toBeNull();
+  });
+});
+
 test.describe("when there is no edge to report", () => {
   test("a gap gets the dominant surface and no split", async ({ page }) => {
     await scene(page, {
@@ -321,12 +490,100 @@ test("a horizontal scroller splits across the inline axis", async ({ page }) => 
   expect(found, "an edge should cross the column somewhere").not.toBeNull();
 
   const got = await read(page, "col");
-  const want = await painted(page, "col", "inline");
+  const want = await painted(page, "col", { axis: "inline" });
 
   expect(await page.getAttribute('[data-target="col"]', "data-kasane-axis")).toBe("inline");
   expect(got.start).toBe(want.start);
   expect(got.end).toBe(want.end);
   expect(Math.abs((got.split ?? 0) - (want.split ?? 0)) * want.extent).toBeLessThanOrEqual(TOLERANCE);
+});
+
+test("the inline axis runs the way the text does", async ({ page }) => {
+  // `block` and `inline` are CSS's logical axes, so a scroller in Arabic runs its inline axis right
+  // to left and the surface at the start of it is the rightmost one, not the leftmost.
+  await scene(page, {
+    axis: "inline",
+    dir: "rtl",
+    surfaces: `
+      <div class="band ink" data-surface="ink"></div>
+      <div class="band paper" data-surface="paper"></div>
+      <div class="band ink" data-surface="ink"></div>`,
+    targets: `<div class="col" data-target="col"></div>`,
+  });
+
+  const got = await read(page, "col");
+  const want = await painted(page, "col", { axis: "inline" });
+
+  expect(want.split, "the scene should put an edge through the column").not.toBeNull();
+
+  // The oracle scans left to right, which here is from the end of the inline axis back to its
+  // start. A reading that matches it mirrored is a reading in the order the writing direction means
+  // — and the one a physical left-to-right reading would get exactly backwards.
+  expect(got.start).toBe(want.end);
+  expect(got.end).toBe(want.start);
+  expect(got.start).not.toBe(got.end);
+
+  const off = Math.abs((got.split ?? 0) - (1 - (want.split ?? 0))) * want.extent;
+  expect(off, `edge off by ${off.toFixed(2)}px`).toBeLessThanOrEqual(TOLERANCE);
+});
+
+test.describe("a layout change nothing reports", () => {
+  test("is picked up by measure", async ({ page }) => {
+    await scene(page, { surfaces: SHIFTED, targets: BAR });
+    await scrollTo(page, 160);
+
+    const before = await read(page, "bar");
+    expect(before.token).toBe("paper");
+
+    // The spacer is neither a surface nor a target, so growing it changes no observed element's own
+    // box: every section below it moves and nothing tells kasane. That is the case measure() exists
+    // for, so the reading has to still be the old one until it is called.
+    await shift(page, 100);
+
+    const stale = await read(page, "bar");
+    expect(stale.token, "nothing observed this, so nothing should have reported it").toBe(before.token);
+    expect(stale.token).not.toBe(dominant(await painted(page, "bar")));
+
+    await page.evaluate(() => window.__controller.measure());
+
+    const after = await read(page, "bar");
+    expect(after.token).toBe(dominant(await painted(page, "bar")));
+  });
+
+  test("is picked up when web fonts land", async ({ page }) => {
+    await scene(page, {
+      surfaces: SHIFTED,
+      targets: BAR,
+      // Fonts land after the first paint and move everything below them. The real promise has long
+      // settled by the time a page is built this way, so the test holds one of its own and settles
+      // it at the moment it wants to check.
+      init: () => {
+        Object.defineProperty(document, "fonts", {
+          configurable: true,
+          value: {
+            ready: new Promise<void>((resolve) => {
+              Object.defineProperty(window, "__fonts", { configurable: true, value: resolve });
+            }),
+          },
+        });
+      },
+    });
+    await scrollTo(page, 160);
+
+    const before = await read(page, "bar");
+    expect(before.token).toBe("paper");
+
+    await shift(page, 100);
+    expect((await read(page, "bar")).token, "fonts have not landed yet").toBe(before.token);
+
+    await page.evaluate(() => window.__fonts());
+    await settle(page);
+    await settle(page);
+
+    const after = await read(page, "bar");
+    expect(after.token).toBe(dominant(await painted(page, "bar")));
+    expect(after.token).not.toBe(before.token);
+  });
 });
 
 test.describe("the controller", () => {
@@ -339,6 +596,50 @@ test.describe("the controller", () => {
 
     expect(await read(page, "bar")).toEqual({ token: null, start: null, end: null, split: null });
     expect(await page.getAttribute('[data-target="bar"]', "data-kasane-axis")).toBeNull();
+  });
+
+  test("a target that is not being painted reports nothing, hidden or removed", async ({ page }) => {
+    await scene(page, {
+      surfaces: BANDS,
+      targets: `${BAR}
+        <div class="bar" data-target="hidden" style="top:80px"></div>
+        <div class="bar" data-target="other" style="top:160px"></div>`,
+    });
+    await scrollTo(page, CROSSING);
+
+    expect((await read(page, "bar")).split, "the scene should put an edge through the bar").not.toBeNull();
+
+    // Nothing is painted behind an element that is not on the page, and nothing is painted behind
+    // one that is display:none either. Both are the state a target is already in before kasane's
+    // first write, which is the state a stylesheet has to render sensibly anyway — so both say so,
+    // rather than one of them holding on to a reading that stopped being true.
+    await page.evaluate(() => {
+      const bar = document.querySelector('[data-target="bar"]') as HTMLElement;
+      bar.remove();
+      window.__parked = bar;
+      (document.querySelector('[data-target="hidden"]') as HTMLElement).style.display = "none";
+    });
+
+    await scrollTo(page, 240);
+    await settle(page);
+
+    const removed = await page.evaluate(() => {
+      const element = window.__parked;
+      return {
+        token: element.getAttribute("data-kasane"),
+        start: element.getAttribute("data-kasane-start"),
+        end: element.getAttribute("data-kasane-end"),
+        split: element.style.getPropertyValue("--kasane-split") || null,
+      };
+    });
+
+    const nothing = { token: null, start: null, end: null, split: null };
+    expect(removed, "a target off the page").toEqual(nothing);
+    expect(await read(page, "hidden"), "a target that is display:none").toEqual(nothing);
+
+    expect((await read(page, "other")).token, "the targets still being painted must follow").toBe(
+      dominant(await painted(page, "other")),
+    );
   });
 
   test("a second call takes a target off the first", async ({ page }) => {
